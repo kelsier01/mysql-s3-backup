@@ -1,6 +1,6 @@
 import { exec } from "child_process";
 import { PutObjectCommand, S3Client, S3ClientConfig } from "@aws-sdk/client-s3";
-import { createReadStream, unlink } from "fs";
+import { createReadStream, unlink, statSync } from "fs";
 import { env } from "./env";
 
 const isDebug = () => {
@@ -45,16 +45,17 @@ const dumpToFile = async (path: string): Promise<void> => {
     const databasesToExclude = ['mysql', 'sys', 'performance_schema', 'information_schema', 'innodb'].join('|');
 
     const command = env.BACKUP_DATABASE_NAME
-      ? `mysqldump ${host} ${port} ${user} ${password} ${env.BACKUP_DATABASE_NAME} | gzip > ${path}`
-      : `mysql ${host} ${port} ${user} ${password} -e "show databases;" | grep -Ev "Database|${databasesToExclude}" | xargs mysqldump ${host} ${port} ${user} ${password} --databases | gzip > ${path}`
+      ? `mysqldump ${host} ${port} ${user} ${password} --single-transaction --routines --triggers ${env.BACKUP_DATABASE_NAME} | gzip > ${path}`
+      : `mysql ${host} ${port} ${user} ${password} -e "show databases;" | grep -Ev "Database|${databasesToExclude}" | xargs mysqldump ${host} ${port} ${user} ${password} --single-transaction --routines --triggers --databases | gzip > ${path}`
 
     if (isDebug()) {
       console.log(`Debug: SQL command: ${command}`);
     }
 
-    exec(command, (error, _, stderr) => {
+    exec(command, (error, stdout, stderr) => {
       if (error) {
         console.log(`Database connection failed: ${error.message}`);
+        console.log(`stderr: ${stderr}`);
         reject({ error: JSON.stringify(error), stderr });
 
         if (isDebug()) {
@@ -62,6 +63,10 @@ const dumpToFile = async (path: string): Promise<void> => {
         }
 
         return;
+      }
+
+      if (stderr && stderr.trim() !== '') {
+        console.log(`Warning during dump: ${stderr}`);
       }
 
       console.log(`Database connection successful, dump created`);
@@ -75,15 +80,17 @@ const deleteFile = async (path: string): Promise<void> => {
 
   await new Promise((resolve, reject) => {
     unlink(path, (error) => {
-      reject({ error: JSON.stringify(error) });
+      if (error) {
+        reject({ error: JSON.stringify(error) });
 
-      if (error && isDebug()) {
-        console.log(`Debug: could not remove local dump file. ${error}`);
+        if (isDebug()) {
+          console.log(`Debug: could not remove local dump file. ${error}`);
+        }
+        return;
       }
 
-      return;
+      resolve(undefined);
     });
-    resolve(undefined);
   });
 }
 
@@ -93,6 +100,20 @@ export const backup = async (): Promise<void> => {
   const filepath = `/tmp/${filename}`;
 
   await dumpToFile(filepath);
+
+  // Verify the backup file was created and has content
+  try {
+    const stats = statSync(filepath);
+    console.log(`Backup file created: ${filepath} (${stats.size} bytes)`);
+
+    if (stats.size === 0) {
+      throw new Error('Backup file is empty');
+    }
+  } catch (error) {
+    console.error(`Error verifying backup file: ${error}`);
+    throw error;
+  }
+
   await uploadToS3({ name: filename, path: filepath });
   await deleteFile(filepath);
 
