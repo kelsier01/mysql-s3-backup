@@ -11,6 +11,7 @@ const uploadToS3 = async (file: { name: string, path: string }): Promise<void> =
   const bucket = env.AWS_S3_BUCKET;
   const clientOptions: S3ClientConfig = {
     region: env.AWS_S3_REGION,
+    forcePathStyle: true,
   };
 
   console.log(`Uploading backup to S3 at ${bucket}/${file.name}...`);
