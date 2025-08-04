@@ -35,6 +35,7 @@ const uploadToS3 = async (file: { name: string, path: string }): Promise<void> =
 
 const dumpToFile = async (path: string): Promise<void> => {
   console.log(`Creating dump at ${path}...`);
+  console.log(`Connecting to database at ${env.BACKUP_DATABASE_HOST}:${env.BACKUP_DATABASE_PORT} as user ${env.BACKUP_DATABASE_USER}`);
 
   await new Promise((resolve, reject) => {
     const host = `--host='${env.BACKUP_DATABASE_HOST}'`;
@@ -53,6 +54,7 @@ const dumpToFile = async (path: string): Promise<void> => {
 
     exec(command, (error, _, stderr) => {
       if (error) {
+        console.log(`Database connection failed: ${error.message}`);
         reject({ error: JSON.stringify(error), stderr });
 
         if (isDebug()) {
@@ -62,6 +64,7 @@ const dumpToFile = async (path: string): Promise<void> => {
         return;
       }
 
+      console.log(`Database connection successful, dump created`);
       resolve(undefined);
     });
   });
