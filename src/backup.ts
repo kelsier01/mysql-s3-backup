@@ -44,15 +44,18 @@ const dumpToFile = async (path: string): Promise<void> => {
     const password = `--password='${env.BACKUP_DATABASE_PASSWORD}'`;
     const databasesToExclude = ['mysql', 'sys', 'performance_schema', 'information_schema', 'innodb'].join('|');
 
+    // Add compatibility options for MySQL authentication
+    const authOptions = '--default-auth=mysql_native_password --skip-ssl';
+
     const command = env.BACKUP_DATABASE_NAME
-      ? `mysqldump ${host} ${port} ${user} ${password} --single-transaction --routines --triggers ${env.BACKUP_DATABASE_NAME} | gzip > ${path}`
-      : `mysql ${host} ${port} ${user} ${password} -e "show databases;" | grep -Ev "Database|${databasesToExclude}" | xargs mysqldump ${host} ${port} ${user} ${password} --single-transaction --routines --triggers --databases | gzip > ${path}`
+      ? `mysqldump ${host} ${port} ${user} ${password} ${authOptions} --single-transaction --routines --triggers ${env.BACKUP_DATABASE_NAME} | gzip > ${path}`
+      : `mysql ${host} ${port} ${user} ${password} ${authOptions} -e "show databases;" | grep -Ev "Database|${databasesToExclude}" | xargs mysqldump ${host} ${port} ${user} ${password} ${authOptions} --single-transaction --routines --triggers --databases | gzip > ${path}`
 
     if (isDebug()) {
       console.log(`Debug: SQL command: ${command}`);
     }
 
-    exec(command, (error, stdout, stderr) => {
+    exec(command, (error, _, stderr) => {
       if (error) {
         console.log(`Database connection failed: ${error.message}`);
         console.log(`stderr: ${stderr}`);
@@ -66,7 +69,14 @@ const dumpToFile = async (path: string): Promise<void> => {
       }
 
       if (stderr && stderr.trim() !== '') {
-        console.log(`Warning during dump: ${stderr}`);
+        // Check if it's just a warning or a real error
+        if (stderr.includes('caching_sha2_password') || stderr.includes('Warning')) {
+          console.log(`Warning during dump: ${stderr}`);
+        } else {
+          console.log(`Error during dump: ${stderr}`);
+          reject({ error: 'mysqldump failed', stderr });
+          return;
+        }
       }
 
       console.log(`Database connection successful, dump created`);
@@ -108,6 +118,11 @@ export const backup = async (): Promise<void> => {
 
     if (stats.size === 0) {
       throw new Error('Backup file is empty');
+    }
+
+    // Check if file is suspiciously small (less than 100 bytes likely means error)
+    if (stats.size < 100) {
+      console.warn(`Warning: Backup file is very small (${stats.size} bytes). This might indicate an issue with the dump.`);
     }
   } catch (error) {
     console.error(`Error verifying backup file: ${error}`);
