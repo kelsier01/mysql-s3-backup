@@ -1,10 +1,13 @@
 import { PutObjectCommand, S3Client, S3ClientConfig } from "@aws-sdk/client-s3";
-import { createReadStream, unlink, statSync } from "fs";
+import { createReadStream, unlink, statSync, writeFileSync } from "fs";
 import { createConnection } from "mysql2/promise";
 import { createGzip } from "zlib";
-import { pipeline } from "stream/promises";
+import { promisify } from "util";
+import { pipeline } from "stream";
 import { Readable } from "stream";
 import { env } from "./env";
+
+const pipelineAsync = promisify(pipeline);
 
 const isDebug = () => {
   return env.DEBUG && env.DEBUG === '1';
@@ -136,7 +139,7 @@ const dumpToFile = async (path: string): Promise<void> => {
     const gzip = createGzip();
     const writeStream = require('fs').createWriteStream(path);
 
-    await pipeline(readable, gzip, writeStream);
+    await pipelineAsync(readable, gzip, writeStream);
 
     console.log('Database dump completed successfully');
 
